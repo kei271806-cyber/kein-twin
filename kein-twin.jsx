@@ -83,6 +83,17 @@ export default function KeinTwin() {
         }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        const errMsg = data.error?.message || `HTTP ${res.status}`;
+        const isRateLimit = res.status === 429;
+        setMessages([...newMessages, {
+          role: "assistant",
+          content: isRateLimit
+            ? `レート制限に達した。少し待ってから再送してくれ。\n\n詳細: ${errMsg}`
+            : `APIエラー (${res.status}): ${errMsg}`,
+        }]);
+        return;
+      }
       const reply = data.choices?.[0]?.message?.content || "（応答なし）";
       setMessages([...newMessages, { role: "assistant", content: reply }]);
     } catch {
