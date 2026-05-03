@@ -33,7 +33,7 @@ const SYSTEM_PROMPT = `あなたはKEINのAIツインです。KEINそのもの�
 - 知らないことや、KEINの個人的な経験について聞かれたら「それは直接聞いてくれ」と返す
 - 政治・宗教・センシティブな話題は避ける`;
 
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+const CATEGORIES = ["experience", "qa", "belief", "skill"];
 
 const TypingDot = ({ delay }) => (
   <span style={{
@@ -48,10 +48,19 @@ export default function KeinTwin() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [apiKey, setApiKey] = useState("");
-  const [keySubmitted, setKeySubmitted] = useState(false);
   const [activeTab, setActiveTab] = useState("chat");
+
+  // memory tab state
+  const [memories, setMemories] = useState([]);
+  const [memInput, setMemInput] = useState("");
+  const [memCategory, setMemCategory] = useState("experience");
+  const [memSaving, setMemSaving] = useState(false);
+  const [memLoading, setMemLoading] = useState(false);
+  const [memMsg, setMemMsg] = useState("");
+
+  // prompt tab state
   const [copied, setCopied] = useState(false);
+
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const textareaRef = useRef(null);
@@ -60,9 +69,9 @@ export default function KeinTwin() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  const submitKey = () => {
-    if (apiKey.trim().startsWith("gsk_")) setKeySubmitted(true);
-  };
+  useEffect(() => {
+    if (activeTab === "memory") loadMemories();
+  }, [activeTab]);
 
   const sendMessage = async () => {
     const text = input.trim();
@@ -74,30 +83,25 @@ export default function KeinTwin() {
     if (textareaRef.current) textareaRef.current.style.height = "42px";
     setLoading(true);
     try {
-      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      const res = await fetch("/api/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model: GROQ_MODEL, max_tokens: 1000,
-          messages: [{ role: "system", content: SYSTEM_PROMPT }, ...newMessages],
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: newMessages }),
       });
       const data = await res.json();
       if (!res.ok) {
-        const errMsg = data.error?.message || `HTTP ${res.status}`;
         const isRateLimit = res.status === 429;
         setMessages([...newMessages, {
           role: "assistant",
           content: isRateLimit
-            ? `レート制限に達した。少し待ってから再送してくれ。\n\n詳細: ${errMsg}`
-            : `APIエラー (${res.status}): ${errMsg}`,
+            ? `レート制限に達した。少し待ってから再送してくれ。\n\n詳細: ${data.error}`
+            : `APIエラー (${res.status}): ${data.error}`,
         }]);
         return;
       }
-      const reply = data.choices?.[0]?.message?.content || "（応答なし）";
-      setMessages([...newMessages, { role: "assistant", content: reply }]);
+      setMessages([...newMessages, { role: "assistant", content: data.reply }]);
     } catch {
-      setMessages([...newMessages, { role: "assistant", content: "エラーが発生した。APIキーとネットワークを確認してくれ。" }]);
+      setMessages([...newMessages, { role: "assistant", content: "ネットワークエラーが発生した。" }]);
     } finally {
       setLoading(false);
       inputRef.current?.focus();
@@ -106,6 +110,51 @@ export default function KeinTwin() {
 
   const handleKey = (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  };
+
+  const loadMemories = async () => {
+    setMemLoading(true);
+    try {
+      const res = await fetch("/api/memories");
+      const data = await res.json();
+      setMemories(data.memories ?? []);
+    } catch {
+      // silent
+    } finally {
+      setMemLoading(false);
+    }
+  };
+
+  const saveMemory = async () => {
+    if (!memInput.trim() || memSaving) return;
+    setMemSaving(true);
+    setMemMsg("");
+    try {
+      const res = await fetch("/api/embed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: memInput.trim(), category: memCategory }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setMemMsg(`エラー: ${data.error}`); return; }
+      setMemInput("");
+      setMemMsg("保存した。");
+      setMemories([data.memory, ...memories]);
+      setTimeout(() => setMemMsg(""), 3000);
+    } catch {
+      setMemMsg("保存に失敗した。");
+    } finally {
+      setMemSaving(false);
+    }
+  };
+
+  const deleteMemory = async (id) => {
+    try {
+      await fetch(`/api/memories?id=${id}`, { method: "DELETE" });
+      setMemories(memories.filter((m) => m.id !== id));
+    } catch {
+      // silent
+    }
   };
 
   const copyPrompt = () => {
@@ -126,9 +175,9 @@ export default function KeinTwin() {
         ::-webkit-scrollbar { width: 3px; }
         ::-webkit-scrollbar-thumb { background: #222; }
         @keyframes kpulse { 0%,80%,100%{opacity:.2;transform:scale(.8)} 40%{opacity:.8;transform:scale(1)} }
-        textarea,input { font-family: 'IBM Plex Mono', monospace; }
+        textarea,input,select { font-family: 'IBM Plex Mono', monospace; }
         textarea { resize: none; }
-        textarea:focus, input:focus { outline: none; border-color: #2a2a2a !important; }
+        textarea:focus, input:focus, select:focus { outline: none; border-color: #2a2a2a !important; }
       `}</style>
 
       {/* Header */}
@@ -142,7 +191,7 @@ export default function KeinTwin() {
 
       {/* Tabs */}
       <div style={{ display: "flex", borderBottom: `1px solid ${border}`, padding: "0 24px", background: bg }}>
-        {["chat", "prompt"].map(tab => (
+        {["chat", "memory", "prompt"].map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)} style={{
             background: "none", border: "none", cursor: "pointer", padding: "10px 18px",
             fontSize: 11, letterSpacing: "0.1em", fontFamily: "'IBM Plex Mono', monospace",
@@ -156,7 +205,7 @@ export default function KeinTwin() {
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", maxWidth: 760, width: "100%", margin: "0 auto", width: "100%" }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", maxWidth: 760, width: "100%", margin: "0 auto" }}>
 
         {/* PROMPT TAB */}
         {activeTab === "prompt" && (
@@ -176,108 +225,143 @@ export default function KeinTwin() {
             </div>
             <p style={{ fontSize: 10, color: "#2e2e2e", letterSpacing: "0.04em", lineHeight: 1.8 }}>
               このプロンプトはKEINの人格の叩き台です。<br />
-              実際の会話履歴やQ&Aを追加することで精度が上がります。
+              MEMORYタブから記憶を追加すると回答精度が上がります。
             </p>
+          </div>
+        )}
+
+        {/* MEMORY TAB */}
+        {activeTab === "memory" && (
+          <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 20 }}>
+            {/* 入力フォーム */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <span style={{ fontSize: 10, letterSpacing: "0.12em", color: "#444" }}>NEW MEMORY</span>
+              <textarea
+                value={memInput}
+                onChange={e => setMemInput(e.target.value)}
+                placeholder="KEINの経験・思考・Q&Aを入力..."
+                rows={4}
+                style={{ background: "#0f0f0f", border: "1px solid #1e1e1e", color: "#d4d4d4", padding: "11px 14px", fontSize: 12, lineHeight: 1.7 }}
+              />
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <select
+                  value={memCategory}
+                  onChange={e => setMemCategory(e.target.value)}
+                  style={{ background: "#0f0f0f", border: "1px solid #1e1e1e", color: "#888", padding: "8px 12px", fontSize: 11, letterSpacing: "0.06em", flex: 1 }}
+                >
+                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+                <button
+                  onClick={saveMemory}
+                  disabled={!memInput.trim() || memSaving}
+                  style={{
+                    background: memInput.trim() && !memSaving ? accent : "#111",
+                    border: "none", color: memInput.trim() && !memSaving ? bg : "#2a2a2a",
+                    padding: "9px 20px", fontSize: 11, letterSpacing: "0.1em",
+                    cursor: memInput.trim() && !memSaving ? "pointer" : "default",
+                    fontFamily: "'IBM Plex Mono', monospace", transition: "all 0.15s",
+                  }}
+                >
+                  {memSaving ? "SAVING..." : "SAVE"}
+                </button>
+              </div>
+              {memMsg && <span style={{ fontSize: 10, color: memMsg.startsWith("エラー") ? "#ff5555" : accent, letterSpacing: "0.06em" }}>{memMsg}</span>}
+            </div>
+
+            {/* 保存済み一覧 */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <span style={{ fontSize: 10, letterSpacing: "0.12em", color: "#444" }}>
+                SAVED — {memLoading ? "..." : `${memories.length} items`}
+              </span>
+              {memories.length === 0 && !memLoading && (
+                <span style={{ fontSize: 11, color: "#252525", padding: "20px 0" }}>// 記憶がまだない</span>
+              )}
+              {memories.map(m => (
+                <div key={m.id} style={{ background: "#0c0c0c", border: `1px solid ${border}`, padding: "12px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 10, color: "#333", letterSpacing: "0.06em", marginBottom: 6 }}>{m.category}</div>
+                    <div style={{ fontSize: 12, lineHeight: 1.7, color: "#666", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.content}</div>
+                  </div>
+                  <button
+                    onClick={() => deleteMemory(m.id)}
+                    style={{ background: "none", border: "1px solid #1c1c1c", color: "#333", padding: "4px 10px", fontSize: 10, cursor: "pointer", flexShrink: 0, fontFamily: "'IBM Plex Mono', monospace", letterSpacing: "0.06em" }}
+                  >
+                    DEL
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
         {/* CHAT TAB */}
         {activeTab === "chat" && (
           <>
-            {!keySubmitted ? (
-              /* Key Gate */
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "48px 28px", gap: 24 }}>
-                <span style={{ fontSize: 11, letterSpacing: "0.15em", color: "#444" }}>GROQ API KEY</span>
-                <div style={{ width: "100%", maxWidth: 400, display: "flex", flexDirection: "column", gap: 12 }}>
-                  <input
-                    type="password" placeholder="gsk_..."
-                    value={apiKey} onChange={e => setApiKey(e.target.value)}
-                    onKeyDown={e => e.key === "Enter" && submitKey()}
-                    style={{ background: "#0f0f0f", border: `1px solid #202020`, color: "#d4d4d4", padding: "12px 16px", fontSize: 12, letterSpacing: "0.05em", width: "100%" }}
-                  />
-                  <p style={{ fontSize: 10, color: "#2e2e2e", letterSpacing: "0.04em", lineHeight: 1.8 }}>
-                    console.groq.com でAPIキーを取得（無料・カード不要）<br />
-                    キーはブラウザ内のみで使用されます。
-                  </p>
-                  <button onClick={submitKey} style={{
-                    background: accent, border: "none", color: bg,
-                    padding: "11px 20px", fontSize: 11, letterSpacing: "0.12em",
-                    cursor: "pointer", fontFamily: "'IBM Plex Mono', monospace",
-                    fontWeight: 500, alignSelf: "flex-end",
+            {/* Messages */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "28px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+              {messages.length === 0 && (
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "#252525", padding: "80px 0" }}>
+                  <span style={{ fontSize: 11, letterSpacing: "0.12em" }}>// KEIN TWIN READY</span>
+                  <span style={{ fontSize: 10, color: "#1e1e1e" }}>何でも聞いてくれ</span>
+                </div>
+              )}
+              {messages.map((msg, i) => (
+                <div key={i} style={{ display: "flex", gap: 12, flexDirection: msg.role === "user" ? "row-reverse" : "row", alignItems: "flex-start" }}>
+                  <div style={{
+                    width: 26, height: 26, flexShrink: 0,
+                    border: `1px solid ${msg.role === "user" ? "#222" : accent + "33"}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, color: msg.role === "user" ? "#444" : accent, marginTop: 2,
                   }}>
-                    START →
-                  </button>
+                    {msg.role === "user" ? "U" : "K"}
+                  </div>
+                  <div style={{
+                    background: msg.role === "user" ? "#0f0f0f" : "#0c0c0c",
+                    border: `1px solid ${msg.role === "user" ? "#1c1c1c" : border}`,
+                    padding: "11px 15px", fontSize: 13, lineHeight: 1.8,
+                    color: msg.role === "user" ? "#777" : "#c8c8c8",
+                    maxWidth: "75%", whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  }}>
+                    {msg.content}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <>
-                {/* Messages */}
-                <div style={{ flex: 1, overflowY: "auto", padding: "28px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
-                  {messages.length === 0 && (
-                    <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "#252525", padding: "80px 0" }}>
-                      <span style={{ fontSize: 11, letterSpacing: "0.12em" }}>// KEIN TWIN READY</span>
-                      <span style={{ fontSize: 10, color: "#1e1e1e" }}>何でも聞いてくれ</span>
-                    </div>
-                  )}
-                  {messages.map((msg, i) => (
-                    <div key={i} style={{ display: "flex", gap: 12, flexDirection: msg.role === "user" ? "row-reverse" : "row", alignItems: "flex-start" }}>
-                      <div style={{
-                        width: 26, height: 26, flexShrink: 0,
-                        border: `1px solid ${msg.role === "user" ? "#222" : accent + "33"}`,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                        fontSize: 10, color: msg.role === "user" ? "#444" : accent, marginTop: 2,
-                      }}>
-                        {msg.role === "user" ? "U" : "K"}
-                      </div>
-                      <div style={{
-                        background: msg.role === "user" ? "#0f0f0f" : "#0c0c0c",
-                        border: `1px solid ${msg.role === "user" ? "#1c1c1c" : border}`,
-                        padding: "11px 15px", fontSize: 13, lineHeight: 1.8,
-                        color: msg.role === "user" ? "#777" : "#c8c8c8",
-                        maxWidth: "75%", whiteSpace: "pre-wrap", wordBreak: "break-word",
-                      }}>
-                        {msg.content}
-                      </div>
-                    </div>
-                  ))}
-                  {loading && (
-                    <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-                      <div style={{ width: 26, height: 26, border: `1px solid ${accent}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: accent }}>K</div>
-                      <div style={{ background: "#0c0c0c", border: `1px solid ${border}`, padding: "14px 16px", display: "flex", gap: 5, alignItems: "center" }}>
-                        <TypingDot delay="0s" /><TypingDot delay="0.2s" /><TypingDot delay="0.4s" />
-                      </div>
-                    </div>
-                  )}
-                  <div ref={bottomRef} />
+              ))}
+              {loading && (
+                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <div style={{ width: 26, height: 26, border: `1px solid ${accent}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: accent }}>K</div>
+                  <div style={{ background: "#0c0c0c", border: `1px solid ${border}`, padding: "14px 16px", display: "flex", gap: 5, alignItems: "center" }}>
+                    <TypingDot delay="0s" /><TypingDot delay="0.2s" /><TypingDot delay="0.4s" />
+                  </div>
                 </div>
+              )}
+              <div ref={bottomRef} />
+            </div>
 
-                {/* Input */}
-                <div style={{ padding: "16px 24px", borderTop: `1px solid ${border}`, display: "flex", gap: 10, alignItems: "flex-end", background: bg }}>
-                  <textarea
-                    ref={e => { inputRef.current = e; textareaRef.current = e; }}
-                    rows={1} placeholder="メッセージを入力..."
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={handleKey}
-                    onInput={e => { e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"; }}
-                    style={{ flex: 1, background: "#0f0f0f", border: "1px solid #1e1e1e", color: "#d4d4d4", padding: "11px 14px", fontSize: 13, lineHeight: 1.5, maxHeight: 120, minHeight: 42 }}
-                  />
-                  <button
-                    onClick={sendMessage}
-                    disabled={!input.trim() || loading}
-                    style={{
-                      background: input.trim() && !loading ? accent : "#111",
-                      border: "none", color: input.trim() && !loading ? bg : "#2a2a2a",
-                      padding: "11px 16px", cursor: input.trim() && !loading ? "pointer" : "default",
-                      fontSize: 11, letterSpacing: "0.08em", flexShrink: 0, transition: "all 0.15s",
-                      alignSelf: "flex-end",
-                    }}
-                  >
-                    SEND
-                  </button>
-                </div>
-              </>
-            )}
+            {/* Input */}
+            <div style={{ padding: "16px 24px", borderTop: `1px solid ${border}`, display: "flex", gap: 10, alignItems: "flex-end", background: bg }}>
+              <textarea
+                ref={e => { inputRef.current = e; textareaRef.current = e; }}
+                rows={1} placeholder="メッセージを入力..."
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={handleKey}
+                onInput={e => { e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"; }}
+                style={{ flex: 1, background: "#0f0f0f", border: "1px solid #1e1e1e", color: "#d4d4d4", padding: "11px 14px", fontSize: 13, lineHeight: 1.5, maxHeight: 120, minHeight: 42 }}
+              />
+              <button
+                onClick={sendMessage}
+                disabled={!input.trim() || loading}
+                style={{
+                  background: input.trim() && !loading ? accent : "#111",
+                  border: "none", color: input.trim() && !loading ? bg : "#2a2a2a",
+                  padding: "11px 16px", cursor: input.trim() && !loading ? "pointer" : "default",
+                  fontSize: 11, letterSpacing: "0.08em", flexShrink: 0, transition: "all 0.15s",
+                  alignSelf: "flex-end",
+                }}
+              >
+                SEND
+              </button>
+            </div>
           </>
         )}
       </div>
