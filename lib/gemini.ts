@@ -8,7 +8,6 @@ export async function embedText(text: string): Promise<number[]> {
         "x-goog-api-key": process.env.GEMINI_API_KEY!,
       },
       body: JSON.stringify({
-        model: "models/text-embedding-004",
         content: { parts: [{ text }] },
       }),
     }
