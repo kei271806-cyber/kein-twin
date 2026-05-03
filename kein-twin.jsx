@@ -33,8 +33,6 @@ const SYSTEM_PROMPT = `あなたはKEINのAIツインです。KEINそのもの�
 - 知らないことや、KEINの個人的な経験について聞かれたら「それは直接聞いてくれ」と返す
 - 政治・宗教・センシティブな話題は避ける`;
 
-const CATEGORIES = ["experience", "qa", "belief", "skill"];
-
 const TypingDot = ({ delay }) => (
   <span style={{
     width: "5px", height: "5px", background: "#b8ff3a",
@@ -44,34 +42,41 @@ const TypingDot = ({ delay }) => (
   }} />
 );
 
+const INITIAL_INTERVIEW_MESSAGE = {
+  role: "assistant",
+  content: "はじめまして。KEINさんのことをもっとよく知るためにいくつか質問させてください。\n\nまず、KEINさんが今一番力を入れていることや、最近取り組んでいるプロジェクトについて教えてもらえますか？",
+};
+
 export default function KeinTwin() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("chat");
 
-  // memory tab state
-  const [memories, setMemories] = useState([]);
+  // memory interview state
+  const [memMessages, setMemMessages] = useState([INITIAL_INTERVIEW_MESSAGE]);
   const [memInput, setMemInput] = useState("");
-  const [memCategory, setMemCategory] = useState("experience");
-  const [memSaving, setMemSaving] = useState(false);
   const [memLoading, setMemLoading] = useState(false);
-  const [memMsg, setMemMsg] = useState("");
+  const [recentSaved, setRecentSaved] = useState([]);
+  const [totalSaved, setTotalSaved] = useState(0);
 
   // prompt tab state
   const [copied, setCopied] = useState(false);
 
   const bottomRef = useRef(null);
+  const memBottomRef = useRef(null);
   const inputRef = useRef(null);
   const textareaRef = useRef(null);
+  const memTextareaRef = useRef(null);
+  const memInputRef = useRef(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
   useEffect(() => {
-    if (activeTab === "memory") loadMemories();
-  }, [activeTab]);
+    memBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [memMessages, memLoading]);
 
   const sendMessage = async () => {
     const text = input.trim();
@@ -112,49 +117,42 @@ export default function KeinTwin() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
 
-  const loadMemories = async () => {
+  const sendMemMessage = async () => {
+    const text = memInput.trim();
+    if (!text || memLoading) return;
+    const userMsg = { role: "user", content: text };
+    const newMessages = [...memMessages, userMsg];
+    setMemMessages(newMessages);
+    setMemInput("");
+    if (memTextareaRef.current) memTextareaRef.current.style.height = "42px";
     setMemLoading(true);
+    setRecentSaved([]);
     try {
-      const res = await fetch("/api/memories");
-      const data = await res.json();
-      setMemories(data.memories ?? []);
-    } catch {
-      // silent
-    } finally {
-      setMemLoading(false);
-    }
-  };
-
-  const saveMemory = async () => {
-    if (!memInput.trim() || memSaving) return;
-    setMemSaving(true);
-    setMemMsg("");
-    try {
-      const res = await fetch("/api/embed", {
+      const res = await fetch("/api/memory-chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: memInput.trim(), category: memCategory }),
+        body: JSON.stringify({ messages: newMessages }),
       });
       const data = await res.json();
-      if (!res.ok) { setMemMsg(`エラー: ${data.error}`); return; }
-      setMemInput("");
-      setMemMsg("保存した。");
-      setMemories([data.memory, ...memories]);
-      setTimeout(() => setMemMsg(""), 3000);
+      if (!res.ok) {
+        setMemMessages([...newMessages, { role: "assistant", content: `エラー: ${data.error}` }]);
+        return;
+      }
+      setMemMessages([...newMessages, { role: "assistant", content: data.reply }]);
+      if (data.savedMemories?.length > 0) {
+        setRecentSaved(data.savedMemories);
+        setTotalSaved(prev => prev + data.savedMemories.length);
+      }
     } catch {
-      setMemMsg("保存に失敗した。");
+      setMemMessages([...newMessages, { role: "assistant", content: "ネットワークエラーが発生した。" }]);
     } finally {
-      setMemSaving(false);
+      setMemLoading(false);
+      memInputRef.current?.focus();
     }
   };
 
-  const deleteMemory = async (id) => {
-    try {
-      await fetch(`/api/memories?id=${id}`, { method: "DELETE" });
-      setMemories(memories.filter((m) => m.id !== id));
-    } catch {
-      // silent
-    }
+  const handleMemKey = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMemMessage(); }
   };
 
   const copyPrompt = () => {
@@ -177,7 +175,7 @@ export default function KeinTwin() {
         @keyframes kpulse { 0%,80%,100%{opacity:.2;transform:scale(.8)} 40%{opacity:.8;transform:scale(1)} }
         textarea,input,select { font-family: 'IBM Plex Mono', monospace; }
         textarea { resize: none; }
-        textarea:focus, input:focus, select:focus { outline: none; border-color: #2a2a2a !important; }
+        textarea:focus, input:focus { outline: none; border-color: #2a2a2a !important; }
       `}</style>
 
       {/* Header */}
@@ -199,7 +197,9 @@ export default function KeinTwin() {
             borderBottom: activeTab === tab ? `1px solid ${accent}` : "1px solid transparent",
             marginBottom: "-1px", transition: "all 0.15s",
           }}>
-            {tab.toUpperCase()}
+            {tab === "memory"
+              ? `MEMORY${totalSaved > 0 ? ` (${totalSaved})` : ""}`
+              : tab.toUpperCase()}
           </button>
         ))}
       </div>
@@ -225,79 +225,92 @@ export default function KeinTwin() {
             </div>
             <p style={{ fontSize: 10, color: "#2e2e2e", letterSpacing: "0.04em", lineHeight: 1.8 }}>
               このプロンプトはKEINの人格の叩き台です。<br />
-              MEMORYタブから記憶を追加すると回答精度が上がります。
+              MEMORYタブで会話して記憶を蓄積すると回答精度が上がります。
             </p>
           </div>
         )}
 
-        {/* MEMORY TAB */}
+        {/* MEMORY TAB — インタビューチャット */}
         {activeTab === "memory" && (
-          <div style={{ padding: 28, display: "flex", flexDirection: "column", gap: 20 }}>
-            {/* 入力フォーム */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              <span style={{ fontSize: 10, letterSpacing: "0.12em", color: "#444" }}>NEW MEMORY</span>
-              <textarea
-                value={memInput}
-                onChange={e => setMemInput(e.target.value)}
-                placeholder="KEINの経験・思考・Q&Aを入力..."
-                rows={4}
-                style={{ background: "#0f0f0f", border: "1px solid #1e1e1e", color: "#d4d4d4", padding: "11px 14px", fontSize: 12, lineHeight: 1.7 }}
-              />
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                <select
-                  value={memCategory}
-                  onChange={e => setMemCategory(e.target.value)}
-                  style={{ background: "#0f0f0f", border: "1px solid #1e1e1e", color: "#888", padding: "8px 12px", fontSize: 11, letterSpacing: "0.06em", flex: 1 }}
-                >
-                  {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <button
-                  onClick={saveMemory}
-                  disabled={!memInput.trim() || memSaving}
-                  style={{
-                    background: memInput.trim() && !memSaving ? accent : "#111",
-                    border: "none", color: memInput.trim() && !memSaving ? bg : "#2a2a2a",
-                    padding: "9px 20px", fontSize: 11, letterSpacing: "0.1em",
-                    cursor: memInput.trim() && !memSaving ? "pointer" : "default",
-                    fontFamily: "'IBM Plex Mono', monospace", transition: "all 0.15s",
-                  }}
-                >
-                  {memSaving ? "SAVING..." : "SAVE"}
-                </button>
+          <>
+            {/* 保存通知 */}
+            {recentSaved.length > 0 && (
+              <div style={{ padding: "10px 24px", borderBottom: `1px solid ${border}`, display: "flex", flexDirection: "column", gap: 4 }}>
+                <span style={{ fontSize: 10, color: accent, letterSpacing: "0.08em" }}>// {recentSaved.length}件の記憶を保存した</span>
+                {recentSaved.map((m, i) => (
+                  <span key={i} style={{ fontSize: 11, color: "#3a3a3a", paddingLeft: 12 }}>— [{m.category}] {m.content.slice(0, 60)}{m.content.length > 60 ? "..." : ""}</span>
+                ))}
               </div>
-              {memMsg && <span style={{ fontSize: 10, color: memMsg.startsWith("エラー") ? "#ff5555" : accent, letterSpacing: "0.06em" }}>{memMsg}</span>}
-            </div>
+            )}
 
-            {/* 保存済み一覧 */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              <span style={{ fontSize: 10, letterSpacing: "0.12em", color: "#444" }}>
-                SAVED — {memLoading ? "..." : `${memories.length} items`}
-              </span>
-              {memories.length === 0 && !memLoading && (
-                <span style={{ fontSize: 11, color: "#252525", padding: "20px 0" }}>// 記憶がまだない</span>
-              )}
-              {memories.map(m => (
-                <div key={m.id} style={{ background: "#0c0c0c", border: `1px solid ${border}`, padding: "12px 14px", display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 10, color: "#333", letterSpacing: "0.06em", marginBottom: 6 }}>{m.category}</div>
-                    <div style={{ fontSize: 12, lineHeight: 1.7, color: "#666", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{m.content}</div>
+            {/* メッセージ一覧 */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "28px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
+              <div style={{ fontSize: 10, color: "#252525", letterSpacing: "0.08em", textAlign: "center" }}>
+                // MEMORY INTERVIEW — 会話内容から自動で記憶を抽出します
+              </div>
+              {memMessages.map((msg, i) => (
+                <div key={i} style={{ display: "flex", gap: 12, flexDirection: msg.role === "user" ? "row-reverse" : "row", alignItems: "flex-start" }}>
+                  <div style={{
+                    width: 26, height: 26, flexShrink: 0,
+                    border: `1px solid ${msg.role === "user" ? "#222" : "#2a3a1a"}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, color: msg.role === "user" ? "#444" : "#6a8a4a", marginTop: 2,
+                  }}>
+                    {msg.role === "user" ? "U" : "I"}
                   </div>
-                  <button
-                    onClick={() => deleteMemory(m.id)}
-                    style={{ background: "none", border: "1px solid #1c1c1c", color: "#333", padding: "4px 10px", fontSize: 10, cursor: "pointer", flexShrink: 0, fontFamily: "'IBM Plex Mono', monospace", letterSpacing: "0.06em" }}
-                  >
-                    DEL
-                  </button>
+                  <div style={{
+                    background: msg.role === "user" ? "#0f0f0f" : "#0b0d0a",
+                    border: `1px solid ${msg.role === "user" ? "#1c1c1c" : "#1a2010"}`,
+                    padding: "11px 15px", fontSize: 13, lineHeight: 1.8,
+                    color: msg.role === "user" ? "#777" : "#b0c8a0",
+                    maxWidth: "78%", whiteSpace: "pre-wrap", wordBreak: "break-word",
+                  }}>
+                    {msg.content}
+                  </div>
                 </div>
               ))}
+              {memLoading && (
+                <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <div style={{ width: 26, height: 26, border: "1px solid #2a3a1a", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#6a8a4a" }}>I</div>
+                  <div style={{ background: "#0b0d0a", border: "1px solid #1a2010", padding: "14px 16px", display: "flex", gap: 5, alignItems: "center" }}>
+                    <TypingDot delay="0s" /><TypingDot delay="0.2s" /><TypingDot delay="0.4s" />
+                  </div>
+                </div>
+              )}
+              <div ref={memBottomRef} />
             </div>
-          </div>
+
+            {/* 入力欄 */}
+            <div style={{ padding: "16px 24px", borderTop: `1px solid ${border}`, display: "flex", gap: 10, alignItems: "flex-end", background: bg }}>
+              <textarea
+                ref={e => { memInputRef.current = e; memTextareaRef.current = e; }}
+                rows={1} placeholder="答えを入力..."
+                value={memInput}
+                onChange={e => setMemInput(e.target.value)}
+                onKeyDown={handleMemKey}
+                onInput={e => { e.target.style.height = "auto"; e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px"; }}
+                style={{ flex: 1, background: "#0f0f0f", border: "1px solid #1e1e1e", color: "#d4d4d4", padding: "11px 14px", fontSize: 13, lineHeight: 1.5, maxHeight: 120, minHeight: 42 }}
+              />
+              <button
+                onClick={sendMemMessage}
+                disabled={!memInput.trim() || memLoading}
+                style={{
+                  background: memInput.trim() && !memLoading ? accent : "#111",
+                  border: "none", color: memInput.trim() && !memLoading ? bg : "#2a2a2a",
+                  padding: "11px 16px", cursor: memInput.trim() && !memLoading ? "pointer" : "default",
+                  fontSize: 11, letterSpacing: "0.08em", flexShrink: 0, transition: "all 0.15s",
+                  alignSelf: "flex-end",
+                }}
+              >
+                SEND
+              </button>
+            </div>
+          </>
         )}
 
         {/* CHAT TAB */}
         {activeTab === "chat" && (
           <>
-            {/* Messages */}
             <div style={{ flex: 1, overflowY: "auto", padding: "28px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
               {messages.length === 0 && (
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: "#252525", padding: "80px 0" }}>
@@ -337,7 +350,6 @@ export default function KeinTwin() {
               <div ref={bottomRef} />
             </div>
 
-            {/* Input */}
             <div style={{ padding: "16px 24px", borderTop: `1px solid ${border}`, display: "flex", gap: 10, alignItems: "flex-end", background: bg }}>
               <textarea
                 ref={e => { inputRef.current = e; textareaRef.current = e; }}
