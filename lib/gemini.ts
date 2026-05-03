@@ -1,6 +1,6 @@
 export async function embedText(text: string): Promise<number[]> {
   const res = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent",
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent",
     {
       method: "POST",
       headers: {
