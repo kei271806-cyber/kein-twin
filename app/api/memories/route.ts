@@ -1,6 +1,7 @@
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 export async function GET() {
+  const supabase = getSupabase();
   const { data, error } = await supabase
     .from("memories")
     .select("id, content, category, created_at")
@@ -15,6 +16,7 @@ export async function DELETE(request: Request) {
   const id = searchParams.get("id");
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });
 
+  const supabase = getSupabase();
   const { error } = await supabase.from("memories").delete().eq("id", id);
   if (error) return Response.json({ error: error.message }, { status: 500 });
   return Response.json({ ok: true });

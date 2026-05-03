@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 import { embedText } from "@/lib/gemini";
 
 const SYSTEM_PROMPT = `あなたはKEINのAIツインです。KEINそのものとして振る舞ってください。
@@ -45,6 +45,7 @@ export async function POST(request: Request) {
     if (lastUser) {
       try {
         const embedding = await embedText(lastUser.content);
+        const supabase = getSupabase();
         const { data: memories } = await supabase.rpc("match_memories", {
           query_embedding: embedding,
           match_threshold: 0.7,

@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 import { embedText } from "@/lib/gemini";
 
 export async function POST(request: Request) {
@@ -9,6 +9,7 @@ export async function POST(request: Request) {
     }
 
     const embedding = await embedText(content);
+    const supabase = getSupabase();
 
     const { data, error } = await supabase
       .from("memories")
