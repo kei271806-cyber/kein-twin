@@ -53,8 +53,16 @@ export default function KeinTwin() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("chat");
 
-  // memory interview state
-  const [memMessages, setMemMessages] = useState([INITIAL_INTERVIEW_MESSAGE]);
+  // memory interview state — localStorage から復元
+  const [memMessages, setMemMessages] = useState(() => {
+    if (typeof window === "undefined") return [INITIAL_INTERVIEW_MESSAGE];
+    try {
+      const saved = localStorage.getItem("kein-mem-messages");
+      return saved ? JSON.parse(saved) : [INITIAL_INTERVIEW_MESSAGE];
+    } catch {
+      return [INITIAL_INTERVIEW_MESSAGE];
+    }
+  });
   const [memInput, setMemInput] = useState("");
   const [memLoading, setMemLoading] = useState(false);
   const [recentSaved, setRecentSaved] = useState([]);
@@ -77,6 +85,10 @@ export default function KeinTwin() {
   useEffect(() => {
     memBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [memMessages, memLoading]);
+
+  useEffect(() => {
+    try { localStorage.setItem("kein-mem-messages", JSON.stringify(memMessages)); } catch {}
+  }, [memMessages]);
 
   const sendMessage = async () => {
     const text = input.trim();
