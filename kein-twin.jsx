@@ -53,18 +53,11 @@ export default function KeinTwin() {
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("chat");
 
-  // memory interview state — localStorage から復元
-  const [memMessages, setMemMessages] = useState(() => {
-    if (typeof window === "undefined") return [INITIAL_INTERVIEW_MESSAGE];
-    try {
-      const saved = localStorage.getItem("kein-mem-messages");
-      return saved ? JSON.parse(saved) : [INITIAL_INTERVIEW_MESSAGE];
-    } catch {
-      return [INITIAL_INTERVIEW_MESSAGE];
-    }
-  });
+  // memory interview state — Supabase から復元
+  const [memMessages, setMemMessages] = useState([INITIAL_INTERVIEW_MESSAGE]);
   const [memInput, setMemInput] = useState("");
   const [memLoading, setMemLoading] = useState(false);
+  const [memInitLoading, setMemInitLoading] = useState(true);
   const [recentSaved, setRecentSaved] = useState([]);
   const [totalSaved, setTotalSaved] = useState(0);
 
@@ -86,9 +79,16 @@ export default function KeinTwin() {
     memBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [memMessages, memLoading]);
 
+  // 起動時に Supabase から会話履歴を読み込む
   useEffect(() => {
-    try { localStorage.setItem("kein-mem-messages", JSON.stringify(memMessages)); } catch {}
-  }, [memMessages]);
+    fetch("/api/conversation")
+      .then(r => r.json())
+      .then(data => {
+        if (data.messages?.length > 0) setMemMessages(data.messages);
+      })
+      .catch(() => {})
+      .finally(() => setMemInitLoading(false));
+  }, []);
 
   const sendMessage = async () => {
     const text = input.trim();
@@ -129,6 +129,13 @@ export default function KeinTwin() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
 
+  const saveConversationMessage = (role, content) =>
+    fetch("/api/conversation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ role, content }),
+    }).catch(() => {});
+
   const sendMemMessage = async () => {
     const text = memInput.trim();
     if (!text || memLoading) return;
@@ -139,6 +146,7 @@ export default function KeinTwin() {
     if (memTextareaRef.current) memTextareaRef.current.style.height = "42px";
     setMemLoading(true);
     setRecentSaved([]);
+    saveConversationMessage("user", text);
     try {
       const res = await fetch("/api/memory-chat", {
         method: "POST",
@@ -150,7 +158,9 @@ export default function KeinTwin() {
         setMemMessages([...newMessages, { role: "assistant", content: `エラー: ${data.error}` }]);
         return;
       }
-      setMemMessages([...newMessages, { role: "assistant", content: data.reply }]);
+      const reply = data.reply;
+      setMemMessages([...newMessages, { role: "assistant", content: reply }]);
+      saveConversationMessage("assistant", reply);
       if (data.savedMemories?.length > 0) {
         setRecentSaved(data.savedMemories);
         setTotalSaved(prev => prev + data.savedMemories.length);
@@ -258,7 +268,7 @@ export default function KeinTwin() {
             {/* メッセージ一覧 */}
             <div style={{ flex: 1, overflowY: "auto", padding: "28px 24px", display: "flex", flexDirection: "column", gap: 20 }}>
               <div style={{ fontSize: 10, color: "#252525", letterSpacing: "0.08em", textAlign: "center" }}>
-                // MEMORY INTERVIEW — 会話内容から自動で記憶を抽出します
+                {memInitLoading ? "// 会話履歴を読み込み中..." : "// MEMORY INTERVIEW — 会話内容から自動で記憶を抽出します"}
               </div>
               {memMessages.map((msg, i) => (
                 <div key={i} style={{ display: "flex", gap: 12, flexDirection: msg.role === "user" ? "row-reverse" : "row", alignItems: "flex-start" }}>
