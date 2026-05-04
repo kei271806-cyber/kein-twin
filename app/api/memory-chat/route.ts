@@ -16,7 +16,8 @@ KEINの「AI Twin」を作るために、できるだけ具体的な情報を集
 ## ルール
 - 日本語で話す
 - 1回に1つだけ質問する
-- ユーザーの回答に自然に反応してから次の質問をする
+- ユーザーの回答を繰り返したり要約したりしない。すぐ次の質問に移る
+- 短い相槌（「なるほど」「わかりました」程度）を挟んでも良いが、内容の繰り返しは厳禁
 - 具体的なエピソードを引き出すよう深掘りする
 - 「KEINさん」と呼ぶ
 - 絵文字は使わない`;
@@ -48,7 +49,7 @@ export async function POST(request: Request) {
         },
         body: JSON.stringify({
           model: "llama-3.3-70b-versatile",
-          max_tokens: 300,
+          max_tokens: 800,
           messages: [{ role: "system", content: INTERVIEWER_PROMPT }, ...messages],
         }),
       }),
