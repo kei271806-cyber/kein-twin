@@ -61,6 +61,12 @@ export default function KeinTwin() {
   const [recentSaved, setRecentSaved] = useState([]);
   const [totalSaved, setTotalSaved] = useState(0);
 
+  // file upload state
+  const [uploadCategory, setUploadCategory] = useState("experience");
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState("");
+  const fileInputRef = useRef(null);
+
   // prompt tab state
   const [copied, setCopied] = useState(false);
 
@@ -177,6 +183,29 @@ export default function KeinTwin() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMemMessage(); }
   };
 
+  const handleFileUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setUploadMsg("アップロード中...");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("category", uploadCategory);
+      const res = await fetch("/api/upload", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok) { setUploadMsg(`エラー: ${data.error}`); return; }
+      setUploadMsg(`完了 — ${data.saved} 件の記憶を保存した`);
+      setTotalSaved(prev => prev + data.saved);
+    } catch {
+      setUploadMsg("アップロードに失敗した。");
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+      setTimeout(() => setUploadMsg(""), 5000);
+    }
+  };
+
   const copyPrompt = () => {
     navigator.clipboard.writeText(SYSTEM_PROMPT);
     setCopied(true);
@@ -255,6 +284,36 @@ export default function KeinTwin() {
         {/* MEMORY TAB — インタビューチャット */}
         {activeTab === "memory" && (
           <>
+            {/* ファイルアップロード */}
+            <div style={{ padding: "12px 24px", borderBottom: `1px solid ${border}`, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <select
+                value={uploadCategory}
+                onChange={e => setUploadCategory(e.target.value)}
+                style={{ background: "#0f0f0f", border: "1px solid #1e1e1e", color: "#555", padding: "6px 10px", fontSize: 10, letterSpacing: "0.06em" }}
+              >
+                {["experience", "belief", "skill", "qa"].map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <input ref={fileInputRef} type="file" accept=".txt,.md,.pdf" onChange={handleFileUpload} style={{ display: "none" }} />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                style={{
+                  background: "none", border: `1px solid ${uploading ? "#1e1e1e" : "#2a2a2a"}`,
+                  color: uploading ? "#2a2a2a" : "#555", padding: "6px 14px", fontSize: 10,
+                  letterSpacing: "0.08em", cursor: uploading ? "default" : "pointer",
+                  fontFamily: "'IBM Plex Mono', monospace",
+                }}
+              >
+                {uploading ? "UPLOADING..." : "UPLOAD FILE"}
+              </button>
+              <span style={{ fontSize: 10, color: "#2a2a2a", letterSpacing: "0.04em" }}>txt / md / pdf</span>
+              {uploadMsg && (
+                <span style={{ fontSize: 10, color: uploadMsg.startsWith("エラー") ? "#ff5555" : accent, letterSpacing: "0.06em" }}>
+                  {uploadMsg}
+                </span>
+              )}
+            </div>
+
             {/* 保存通知 */}
             {recentSaved.length > 0 && (
               <div style={{ padding: "10px 24px", borderBottom: `1px solid ${border}`, display: "flex", flexDirection: "column", gap: 4 }}>
