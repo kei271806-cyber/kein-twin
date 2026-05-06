@@ -72,11 +72,10 @@ export async function POST(request: Request) {
     let text = "";
 
     if (isPdf) {
-      const buffer = Buffer.from(await file.arrayBuffer());
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const pdfParse = await import("pdf-parse") as any;
-      const parsed = await (pdfParse.default ?? pdfParse)(buffer);
-      text = parsed.text;
+      const { extractText } = await import("unpdf");
+      const buffer = new Uint8Array(await file.arrayBuffer());
+      const { text: extracted } = await extractText(buffer, { mergePages: true });
+      text = extracted;
     } else {
       text = await file.text();
     }
