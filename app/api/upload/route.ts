@@ -6,7 +6,7 @@ function chunkText(text: string, maxSize = 400): string[] {
     .replace(/\r\n/g, "\n")
     .split(/\n{2,}/)
     .map((p) => p.trim())
-    .filter((p) => p.length > 30);
+    .filter((p) => p.length > 10);
 
   const chunks: string[] = [];
   let current = "";
@@ -74,19 +74,23 @@ export async function POST(request: Request) {
     if (isPdf) {
       const { extractText } = await import("unpdf");
       const buffer = new Uint8Array(await file.arrayBuffer());
-      const { text: extracted } = await extractText(buffer, { mergePages: true });
-      text = extracted;
+      // mergePages: false で pages 配列を取得して結合する
+      const result = await extractText(buffer, { mergePages: false });
+      const pages = result.text;
+      text = Array.isArray(pages) ? pages.join("\n\n") : String(pages ?? "");
     } else {
       text = await file.text();
     }
 
     if (!text.trim()) {
-      return Response.json({ error: "ファイルからテキストを抽出できなかった" }, { status: 400 });
+      return Response.json({
+        error: "テキストを抽出できなかった。スキャンされたPDF（画像PDF）は非対応です。テキストベースのPDFを使用してください。",
+      }, { status: 400 });
     }
 
     const chunks = chunkText(text);
     if (chunks.length === 0) {
-      return Response.json({ error: "有効なテキストが見つからなかった" }, { status: 400 });
+      return Response.json({ error: `テキストは取得できたが有効なチャンクがなかった（文字数: ${text.length}）` }, { status: 400 });
     }
 
     const supabase = getSupabase();
