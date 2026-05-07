@@ -1,6 +1,8 @@
 import { getSupabase } from "@/lib/supabase";
 import { embedText } from "@/lib/gemini";
 
+export const maxDuration = 60;
+
 function chunkText(text: string, maxSize = 400): string[] {
   const paragraphs = text
     .replace(/\r\n/g, "\n")
@@ -88,24 +90,29 @@ export async function POST(request: Request) {
       }, { status: 400 });
     }
 
-    const chunks = chunkText(text);
+    const chunks = chunkText(text).slice(0, 50); // 最大50チャンク
     if (chunks.length === 0) {
       return Response.json({ error: `テキストは取得できたが有効なチャンクがなかった（文字数: ${text.length}）` }, { status: 400 });
     }
 
     const supabase = getSupabase();
-    let savedCount = 0;
 
-    for (const chunk of chunks) {
-      try {
-        const embedding = await embedText(chunk);
-        await supabase
-          .from("memories")
-          .insert({ content: chunk, category, embedding });
-        savedCount++;
-      } catch {
-        // 個別チャンクの失敗は無視して続行
-      }
+    // 10件ずつ並列処理してタイムアウトを防ぐ
+    const BATCH = 10;
+    let savedCount = 0;
+    for (let i = 0; i < chunks.length; i += BATCH) {
+      const batch = chunks.slice(i, i + BATCH);
+      await Promise.all(
+        batch.map(async (chunk) => {
+          try {
+            const embedding = await embedText(chunk);
+            await supabase.from("memories").insert({ content: chunk, category, embedding });
+            savedCount++;
+          } catch {
+            // 個別チャンクの失敗は無視
+          }
+        })
+      );
     }
 
     return Response.json({ saved: savedCount, total: chunks.length });
